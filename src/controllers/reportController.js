@@ -2,8 +2,19 @@ const Transaction = require('../models/Transaction');
 const PDFDocument = require('pdfkit');
 
 // Helper: get date range for a period
-const getRange = (period, dateStr) => {
-  const d = dateStr ? new Date(dateStr) : new Date();
+const getRange = (query) => {
+  const { period, date, from, to } = query;
+
+  // Custom range: both from and to provided
+  if (from && to) {
+    const start = new Date(from);
+    const end = new Date(to);
+    end.setDate(end.getDate() + 1); // make "to" inclusive (whole day)
+    return { start, end, mode: 'custom' };
+  }
+
+  // Preset: derive from period + date
+  const d = date ? new Date(date) : new Date();
   let start, end;
 
   if (period === 'daily') {
@@ -18,11 +29,11 @@ const getRange = (period, dateStr) => {
     start = new Date(d.getFullYear(), 0, 1);
     end = new Date(d.getFullYear() + 1, 0, 1);
   } else {
-    // default: monthly
     start = new Date(d.getFullYear(), d.getMonth(), 1);
     end = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   }
-  return { start, end };
+
+  return { start, end, mode: period || 'monthly' };
 };
 
 // @desc    Get report summary for a period
@@ -30,8 +41,8 @@ const getRange = (period, dateStr) => {
 // @access  Private
 const getReport = async (req, res) => {
   try {
-    const { period = 'monthly', date } = req.query;
-    const { start, end } = getRange(period, date);
+    const { start, end, mode } = getRange(req.query);
+    const period = mode;
     const userId = req.user._id;
 
     const totals = await Transaction.aggregate([
@@ -90,8 +101,8 @@ const getReport = async (req, res) => {
 // @access  Private
 const exportCSV = async (req, res) => {
   try {
-    const { period = 'monthly', date } = req.query;
-    const { start, end } = getRange(period, date);
+    const { start, end, mode } = getRange(req.query);
+    const period = mode;
 
     const transactions = await Transaction.find({
       user: req.user._id,
@@ -112,7 +123,7 @@ const exportCSV = async (req, res) => {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="report-${period}-${start.toISOString().slice(0, 10)}.csv"`
+      `attachment; filename="report-${start.toISOString().slice(0, 10)}_to_${end.toISOString().slice(0, 10)}.csv"`
     );
     res.send(csv);
   } catch (error) {
@@ -126,8 +137,8 @@ const exportCSV = async (req, res) => {
 // @access  Private
 const exportPDF = async (req, res) => {
   try {
-    const { period = 'monthly', date } = req.query;
-    const { start, end } = getRange(period, date);
+    const { start, end, mode } = getRange(req.query);
+    const period = mode;
 
     const transactions = await Transaction.find({
       user: req.user._id,
@@ -140,72 +151,134 @@ const exportPDF = async (req, res) => {
       if (t.type === 'expense') expense += t.amount;
     });
 
-    const doc = new PDFDocument({ margin: 50 });
-
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="report-${period}-${start.toISOString().slice(0, 10)}.pdf"`
+      `attachment; filename="report-${start.toISOString().slice(0, 10)}_to_${end.toISOString().slice(0, 10)}.pdf"`
     );
-
     doc.pipe(res);
 
-    doc.fontSize(20).text('ExpenseFlow Report', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(11).text(`Period: ${period}`, { align: 'center' });
+    const pageWidth = doc.page.width;
+    const leftX = 40;
+    const rightX = pageWidth - 40;
+    const contentWidth = rightX - leftX;
+
+    // Title
+    doc.font('Helvetica-Bold').fontSize(22).text('ExpenseFlow Report', { align: 'center' });
+    doc.moveDown(0.3);
+    doc.font('Helvetica').fontSize(12).fillColor('#555')
+      .text(`${period.charAt(0).toUpperCase() + period.slice(1)} report`, { align: 'center' });
     doc.text(
-      `Range: ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}`,
+      `${start.toISOString().slice(0, 10)} to ${new Date(end.getTime() - 86400000).toISOString().slice(0, 10)}`,
       { align: 'center' }
     );
-    doc.moveDown(1.5);
+    doc.fillColor('#000');
+    doc.moveDown(1.2);
 
-    doc.fontSize(14).text('Summary', { underline: true });
-    doc.moveDown(0.5);
-    doc.fontSize(11);
-    doc.text(`Total Income:   Rs. ${income}`);
-    doc.text(`Total Expenses: Rs. ${expense}`);
-    doc.text(`Net Savings:    Rs. ${income - expense}`);
-    doc.text(`Transactions:   ${transactions.length}`);
-    doc.moveDown(1.5);
+    // Summary box
+    const summaryY = doc.y;
+    const boxH = 90;
+    doc.rect(leftX, summaryY, contentWidth, boxH).stroke('#ddd');
+    doc.font('Helvetica-Bold').fontSize(14).text('Summary', leftX + 12, summaryY + 10);
 
-    doc.fontSize(14).text('Transactions', { underline: true });
-    doc.moveDown(0.5);
-
-    const colX = { date: 50, type: 130, category: 200, amount: 310, method: 400, desc: 490 };
-    doc.fontSize(10).font('Helvetica-Bold');
-    doc.text('Date', colX.date, doc.y, { continued: true, width: 80 });
-    doc.text('Type', colX.type, doc.y, { continued: true, width: 70 });
-    doc.text('Category', colX.category, doc.y, { continued: true, width: 110 });
-    doc.text('Amount', colX.amount, doc.y, { continued: true, width: 90 });
-    doc.text('Method', colX.method, doc.y, { continued: true, width: 90 });
-    doc.text('Description', colX.desc, doc.y);
-    doc.moveDown(0.3);
-    doc.font('Helvetica');
-
-    const headerY = doc.y;
-    doc.moveTo(50, headerY).lineTo(550, headerY).stroke();
-    doc.moveDown(0.3);
-
-    transactions.forEach((t) => {
-      const rowY = doc.y;
-      const d = t.date.toISOString().slice(0, 10);
-      doc.fontSize(9).text(d, colX.date, rowY, { width: 80 });
-      doc.text(t.type, colX.type, rowY, { width: 70 });
-      doc.text(t.category, colX.category, rowY, { width: 110 });
-      doc.text(`${t.amount}`, colX.amount, rowY, { width: 90 });
-      doc.text(t.paymentMethod, colX.method, rowY, { width: 90 });
-      doc.text(t.description || '-', colX.desc, rowY, { width: 60 });
-      doc.moveDown(0.4);
+    const colW = contentWidth / 4;
+    const labels = ['Income', 'Expenses', 'Net Savings', 'Transactions'];
+    const values = [
+      `Rs. ${income.toLocaleString('en-IN')}`,
+      `Rs. ${expense.toLocaleString('en-IN')}`,
+      `Rs. ${(income - expense).toLocaleString('en-IN')}`,
+      `${transactions.length}`,
+    ];
+    labels.forEach((label, i) => {
+      const x = leftX + 12 + colW * i;
+      doc.font('Helvetica').fontSize(10).fillColor('#666').text(label, x, summaryY + 32);
+      doc.font('Helvetica-Bold').fontSize(13).fillColor('#000').text(values[i], x, summaryY + 48);
     });
 
+    doc.y = summaryY + boxH + 20;
+    doc.x = leftX;
+
+    // Table header
+    doc.font('Helvetica-Bold').fontSize(14).text('Transactions', leftX, doc.y);
+    doc.moveDown(0.5);
+
+    // Column widths
+    const cols = [
+      { label: 'Date', width: 70 },
+      { label: 'Type', width: 55 },
+      { label: 'Category', width: 90 },
+      { label: 'Method', width: 70 },
+      { label: 'Amount', width: 80, align: 'right' },
+      { label: 'Description', width: contentWidth - 70 - 55 - 90 - 70 - 80, align: 'left' },
+    ];
+
+    const drawHeader = (y) => {
+      let x = leftX;
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#000');
+      cols.forEach((c) => {
+        doc.text(c.label, x, y, {
+          width: c.width,
+          align: c.align || 'left',
+          lineBreak: false,
+        });
+        x += c.width;
+      });
+      doc.moveTo(leftX, y + 14).lineTo(rightX, y + 14).stroke('#000');
+      return y + 20;
+    };
+
+    let rowY = drawHeader(doc.y);
+
     if (transactions.length === 0) {
-      doc.moveDown().fontSize(10).text('No transactions in this period.', { align: 'center' });
+      doc.font('Helvetica').fontSize(11).fillColor('#666')
+        .text('No transactions in this period.', leftX, rowY, { width: contentWidth, align: 'center' });
+    } else {
+      transactions.forEach((t, i) => {
+        // New page if we're near the bottom
+        if (rowY > doc.page.height - 80) {
+          doc.addPage();
+          rowY = drawHeader(50);
+        }
+
+        const row = [
+          new Date(t.date).toISOString().slice(0, 10),
+          t.type === 'income' ? '+' : '-',
+          t.category,
+          t.paymentMethod,
+          `${t.type === 'income' ? '+' : '-'}${t.amount.toLocaleString('en-IN')}`,
+          t.description || '-',
+        ];
+
+        const rowH = 16;
+        // zebra
+        if (i % 2 === 0) {
+          doc.rect(leftX, rowY - 2, contentWidth, rowH).fill('#f7f7f7');
+        }
+
+        let x = leftX;
+        doc.font('Helvetica').fontSize(10).fillColor('#000');
+        cols.forEach((c, ci) => {
+          let val = row[ci];
+          if (ci === 1) val = t.type; // show 'income'/'expense' text instead of +/-
+          doc.text(val, x, rowY, {
+            width: c.width,
+            align: c.align || 'left',
+            lineBreak: false,
+            ellipsis: true,
+          });
+          x += c.width;
+        });
+        rowY += rowH;
+      });
     }
 
-    doc.moveDown(2);
-    doc.fontSize(9).fillColor('gray').text(
+    // Footer
+    doc.fontSize(9).fillColor('#888').text(
       `Generated on ${new Date().toISOString().slice(0, 10)} by ExpenseFlow`,
-      { align: 'center' }
+      leftX,
+      doc.page.height - 50,
+      { width: contentWidth, align: 'center' }
     );
 
     doc.end();
