@@ -151,7 +151,7 @@ const exportPDF = async (req, res) => {
       if (t.type === 'expense') expense += t.amount;
     });
 
-    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+        const doc = new PDFDocument({ margin: 40, size: 'A4' });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
@@ -163,9 +163,9 @@ const exportPDF = async (req, res) => {
     const leftX = 40;
     const rightX = pageWidth - 40;
     const contentWidth = rightX - leftX;
-    const cellPad = 5; // padding inside each cell
+    const cellPad = 8; // <-- bigger padding than before
 
-    // Title
+    // ===== Title =====
     doc.font('Helvetica-Bold').fontSize(22).text('ExpenseFlow Report', { align: 'center' });
     doc.moveDown(0.3);
     doc.font('Helvetica').fontSize(12).fillColor('#555')
@@ -177,7 +177,7 @@ const exportPDF = async (req, res) => {
     doc.fillColor('#000');
     doc.moveDown(1.2);
 
-    // Summary box
+    // ===== Summary box =====
     const summaryY = doc.y;
     const boxH = 95;
     doc.rect(leftX, summaryY, contentWidth, boxH).stroke('#ddd');
@@ -200,72 +200,96 @@ const exportPDF = async (req, res) => {
     doc.y = summaryY + boxH + 20;
     doc.x = leftX;
 
-    // Table header
+    // ===== Transactions table =====
     doc.font('Helvetica-Bold').fontSize(14).text('Transactions', leftX, doc.y);
     doc.moveDown(0.5);
 
-    // Column widths — give Amount & Description more room
-    const dateW = 62;
-    const typeW = 52;
-    const catW = 80;
-    const methodW = 58;
-    const amountW = 90;
+    // Column widths — Amount needs extra room for ₹14,62,504 and beyond
+    const dateW = 70;
+    const typeW = 55;
+    const catW = 85;
+    const methodW = 65;
+    const amountW = 110; // <-- wider than before
     const descW = contentWidth - dateW - typeW - catW - methodW - amountW;
 
     const cols = [
-      { label: 'Date', width: dateW, align: 'left' },
-      { label: 'Type', width: typeW, align: 'left' },
-      { label: 'Category', width: catW, align: 'left' },
-      { label: 'Method', width: methodW, align: 'left' },
-      { label: 'Amount', width: amountW, align: 'right' },
-      { label: 'Description', width: descW, align: 'left' },
+      { label: 'Date',        width: dateW,   align: 'left' },
+      { label: 'Type',        width: typeW,   align: 'left' },
+      { label: 'Category',    width: catW,    align: 'left' },
+      { label: 'Method',      width: methodW, align: 'left' },
+      { label: 'Amount',      width: amountW, align: 'right' },
+      { label: 'Description', width: descW,   align: 'left' },
     ];
 
-    const drawHeader = (y) => {
+    // Draw a vertical line at each column boundary
+    const drawColumnDividers = (topY, bottomY) => {
       let x = leftX;
-      doc.font('Helvetica-Bold').fontSize(10).fillColor('#000');
+      doc.strokeColor('#ddd').lineWidth(0.5);
+      // First and last edges
+      doc.moveTo(leftX, topY).lineTo(leftX, bottomY).stroke();
       cols.forEach((c) => {
-        doc.text(c.label, x + cellPad / 2, y, {
-          width: c.width - cellPad,
+        x += c.width;
+        doc.moveTo(x, topY).lineTo(x, bottomY).stroke();
+      });
+      doc.strokeColor('#000').lineWidth(1);
+    };
+
+    const drawHeader = (y) => {
+      const headerH = 22;
+      // Header background
+      doc.rect(leftX, y - 2, contentWidth, headerH).fill('#eef2f7');
+      // Header text
+      let x = leftX;
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#111');
+      cols.forEach((c) => {
+        doc.text(c.label, x + cellPad, y + 4, {
+          width: c.width - cellPad * 2,
           align: c.align,
           lineBreak: false,
         });
         x += c.width;
       });
-      doc.moveTo(leftX, y + 15).lineTo(rightX, y + 15).stroke('#444');
-      return y + 22;
+      // Header bottom border (thicker)
+      doc.strokeColor('#333').lineWidth(1)
+        .moveTo(leftX, y + headerH - 2).lineTo(rightX, y + headerH - 2).stroke();
+      doc.strokeColor('#000').lineWidth(1);
+      return y + headerH + 4;
     };
 
     let rowY = drawHeader(doc.y);
 
     if (transactions.length === 0) {
       doc.font('Helvetica').fontSize(11).fillColor('#666')
-        .text('No transactions in this period.', leftX, rowY, { width: contentWidth, align: 'center' });
+        .text('No transactions in this period.', leftX, rowY + 10, { width: contentWidth, align: 'center' });
     } else {
+      const rowStartsAt = rowY - 4; // remember where rows begin for dividers
+
       transactions.forEach((t, i) => {
-        // Measure description height first (wrap)
+        // Measure description wrap height
         doc.font('Helvetica').fontSize(10);
         const descText = t.description || '-';
         const descHeight = doc.heightOfString(descText, {
-          width: descW - cellPad,
+          width: descW - cellPad * 2,
           align: 'left',
         });
-        const rowH = Math.max(18, descHeight + 6);
+        const rowH = Math.max(22, descHeight + 10);
 
-        // New page if we're near bottom
+        // Page break
         if (rowY + rowH > doc.page.height - 70) {
+          // Draw dividers for the rows drawn so far on this page
+          drawColumnDividers(rowStartsAt, rowY);
+
           doc.addPage();
           rowY = drawHeader(50);
         }
 
-        // Zebra stripe
+        // Zebra
         if (i % 2 === 0) {
-          doc.rect(leftX, rowY - 2, contentWidth, rowH).fill('#f7f7f7');
+          doc.rect(leftX, rowY - 2, contentWidth, rowH).fill('#fafafa');
         }
 
-        // Prepare row values
         const amountText = `${t.type === 'income' ? '+' : '-'}₹${t.amount.toLocaleString('en-IN')}`;
-        const rows = [
+        const rowData = [
           new Date(t.date).toISOString().slice(0, 10),
           t.type,
           t.category,
@@ -276,25 +300,39 @@ const exportPDF = async (req, res) => {
 
         let x = leftX;
         cols.forEach((c, ci) => {
-          doc.font('Helvetica').fontSize(10).fillColor('#000');
-          // Color amounts: income green, expense red
+          // Set font/color per cell
+          doc.font('Helvetica').fontSize(10);
           if (ci === 4) {
             doc.fillColor(t.type === 'income' ? '#047857' : '#b91c1c');
+            doc.font('Helvetica-Bold'); // amounts bold
+          } else {
+            doc.fillColor('#000');
           }
-          doc.text(rows[ci], x + cellPad / 2, rowY + 3, {
-            width: c.width - cellPad,
+
+          // Amount right-aligned, with 8px right padding so it doesn't touch the divider
+          const cellX = ci === 4 ? x + cellPad / 2 : x + cellPad;
+          const cellWidth = ci === 4 ? c.width - cellPad : c.width - cellPad * 2;
+
+          doc.text(rowData[ci], cellX, rowY + 4, {
+            width: cellWidth,
             align: c.align,
             lineBreak: ci === 5, // only Description wraps
-            ellipsis: ci !== 5,   // others truncate with …
+            ellipsis: ci !== 5,
           });
+
           x += c.width;
         });
 
-        // Divider line
-        doc.moveTo(leftX, rowY + rowH - 2).lineTo(rightX, rowY + rowH - 2).stroke('#eee');
+        // Bottom row divider (light)
+        doc.strokeColor('#e5e7eb').lineWidth(0.5)
+          .moveTo(leftX, rowY + rowH - 2).lineTo(rightX, rowY + rowH - 2).stroke();
+        doc.strokeColor('#000').lineWidth(1);
 
         rowY += rowH;
       });
+
+      // Draw all column dividers for the full table height at the end
+      drawColumnDividers(rowStartsAt, rowY);
     }
 
     // Footer
