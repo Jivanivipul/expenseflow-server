@@ -11,6 +11,7 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const budgetRoutes = require('./routes/budgetRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const debtRoutes = require('./routes/debtRoutes');
+const accountRoutes = require('./routes/accountRoutes');
 
 const app = express();
 
@@ -33,7 +34,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/debts', debtRoutes);
-
+app.use('/api/accounts', accountRoutes);
 
 // Start server
 const PORT = process.env.PORT || 5000;

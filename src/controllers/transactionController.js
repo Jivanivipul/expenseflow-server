@@ -13,6 +13,7 @@ const createTransaction = async (req, res) => {
 
     const transaction = await Transaction.create({
       user: req.user._id,
+      account: req.body.account || null,
       type,
       amount,
       category,
@@ -34,7 +35,7 @@ const createTransaction = async (req, res) => {
 const getTransactions = async (req, res) => {
   try {
     const { type, category, from, to, search, limit = 100 } = req.query;
-    const query = { user: req.user._id };
+    if (req.query.account) query.account = req.query.account;
 
     if (type) query.type = type;
     if (category) query.category = category;
@@ -72,7 +73,7 @@ const updateTransaction = async (req, res) => {
       return res.status(404).json({ message: 'Transaction not found' });
     }
 
-    const fields = ['type', 'amount', 'category', 'description', 'paymentMethod', 'date'];
+    const fields = ['type', 'amount', 'category', 'description', 'paymentMethod', 'date', 'account'];
     fields.forEach((f) => {
       if (req.body[f] !== undefined) transaction[f] = req.body[f];
     });

@@ -8,6 +8,11 @@ const transactionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    account: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Account',
+      index: true,
+    },
     type: {
       type: String,
       enum: ['income', 'expense'],
