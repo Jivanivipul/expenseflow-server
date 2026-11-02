@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Transaction = require('../models/Transaction');
 
 // @desc    Create a transaction (income or expense)
@@ -11,9 +12,15 @@ const createTransaction = async (req, res) => {
       return res.status(400).json({ message: 'type, amount and category are required' });
     }
 
+    // Only set account if it's a valid ObjectId (ignore empty strings / invalid)
+    let accountId = null;
+    if (req.body.account && mongoose.Types.ObjectId.isValid(req.body.account)) {
+      accountId = req.body.account;
+    }
+
     const transaction = await Transaction.create({
       user: req.user._id,
-      account: req.body.account || null,
+      account: accountId,
       type,
       amount,
       category,
@@ -35,17 +42,26 @@ const createTransaction = async (req, res) => {
 const getTransactions = async (req, res) => {
   try {
     const { type, category, from, to, search, limit = 100 } = req.query;
-    if (req.query.account) query.account = req.query.account;
+
+    // ✅ Declare the query object BEFORE using it
+    const query = { user: req.user._id };
 
     if (type) query.type = type;
     if (category) query.category = category;
+
     if (from || to) {
       query.date = {};
       if (from) query.date.$gte = new Date(from);
       if (to) query.date.$lte = new Date(to);
     }
+
     if (search) {
       query.description = { $regex: search, $options: 'i' };
+    }
+
+    // ✅ Only filter by account if it's a valid ObjectId (skip empty strings)
+    if (req.query.account && mongoose.Types.ObjectId.isValid(req.query.account)) {
+      query.account = req.query.account;
     }
 
     const transactions = await Transaction.find(query)
@@ -75,7 +91,17 @@ const updateTransaction = async (req, res) => {
 
     const fields = ['type', 'amount', 'category', 'description', 'paymentMethod', 'date', 'account'];
     fields.forEach((f) => {
-      if (req.body[f] !== undefined) transaction[f] = req.body[f];
+      if (req.body[f] !== undefined) {
+        // For account, only set valid ObjectIds; otherwise set to null
+        if (f === 'account') {
+          transaction.account =
+            req.body.account && mongoose.Types.ObjectId.isValid(req.body.account)
+              ? req.body.account
+              : null;
+        } else {
+          transaction[f] = req.body[f];
+        }
+      }
     });
 
     await transaction.save();
